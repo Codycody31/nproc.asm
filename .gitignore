@@ -1,0 +1,5 @@
+*
+!.gitignore
+!nproc.asm
+!Makefile
+!README.md
