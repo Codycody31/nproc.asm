@@ -3,3 +3,5 @@
 !nproc.asm
 !Makefile
 !README.md
+!tests/
+!tests/**
