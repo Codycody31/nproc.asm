@@ -21,6 +21,7 @@
 %define SCHED_FIFO              1
 %define SCHED_RR                2
 %define SCHED_DEADLINE          6
+%define EINTR                   4
 %define EINVAL                  22
 %define ULONG_MAX               -1
 %define AFFINITY_BYTES_INIT     128
@@ -41,7 +42,6 @@ section .rodata
     opt_help:               db '--help', 0
     opt_version:            db '--version', 0
     opt_ignore:             db '--ignore', 0
-    opt_ignore_eq:          db '--ignore=', 0
     opt_end:                db '--', 0
 
     env_omp_threads:        db 'OMP_NUM_THREADS=', 0
@@ -54,6 +54,8 @@ section .rodata
     msg_unknown_option:     db 'unrecognized option ', 0
     msg_requires_arg:       db "option '--ignore' requires an argument", 10, 0
     msg_try_help:           db "Try 'nproc --help' for more information.", 10, 0
+    msg_write_error:        db 'nproc: write error', 10
+    msg_write_error_len:    equ $ - msg_write_error
     quote:                  db "'", 0
     quote_nl:               db "'", 10, 0
 
@@ -119,19 +121,19 @@ parse_args:
 
     mov     rdi, rbx
     lea     rsi, [rel opt_help]
-    call    streq
+    call    option_abbrev
     test    eax, eax
     jnz     print_help
 
     mov     rdi, rbx
     lea     rsi, [rel opt_version]
-    call    streq
+    call    option_abbrev
     test    eax, eax
     jnz     print_version
 
     mov     rdi, rbx
     lea     rsi, [rel opt_all]
-    call    streq
+    call    option_abbrev
     test    eax, eax
     jz      check_ignore_eq
     mov     qword [rel flag_all], 1
@@ -139,8 +141,8 @@ parse_args:
 
 check_ignore_eq:
     mov     rdi, rbx
-    lea     rsi, [rel opt_ignore_eq]
-    call    prefix_match
+    lea     rsi, [rel opt_ignore]
+    call    option_abbrev_eq
     jc      check_ignore_sep
     mov     [rel value_arg_ptr], rdi
     call    parse_cli_uint
@@ -151,7 +153,7 @@ check_ignore_eq:
 check_ignore_sep:
     mov     rdi, rbx
     lea     rsi, [rel opt_ignore]
-    call    streq
+    call    option_abbrev
     test    eax, eax
     jz      check_unknown_option
     inc     r13
@@ -389,12 +391,16 @@ get_cgroup2_cpu_quota:
     je      .done
 
     lea     rdi, [rel pathbuf]
+    lea     rdx, [rel pathbuf + PATHBUF_SIZE]
     lea     rsi, [rel mountbuf]
-    call    append_z
+    call    append_z_bounded
+    jc      .parent
     mov     rsi, r12
-    call    append_z
+    call    append_z_bounded
+    jc      .parent
     lea     rsi, [rel suffix_cpu_max]
-    call    append_z
+    call    append_z_bounded
+    jc      .parent
 
     lea     rdi, [rel pathbuf]
     lea     rsi, [rel filebuf]
@@ -969,10 +975,23 @@ parse_uint_prefix:
     sub     r8d, '0'
     cmp     r8d, 9
     ja      .done
+    cmp     rax, ULONG_MAX
+    je      .next
+    mov     rdx, 1844674407370955161
+    cmp     rax, rdx
+    ja      .saturate
+    jb      .accumulate
+    cmp     r8d, 5
+    ja      .saturate
+.accumulate:
     lea     rax, [rax + rax*4]
     lea     rax, [r8 + rax*2]
+.next:
     inc     rdi
     jmp     .loop
+.saturate:
+    mov     rax, ULONG_MAX
+    jmp     .next
 .done:
     clc
     ret
@@ -1179,8 +1198,28 @@ write_prog_prefix:
     ret
 
 write_fd_len:
+.loop:
+    test    rdx, rdx
+    jz      .done
     mov     eax, SYS_WRITE
     syscall
+    test    rax, rax
+    js      .error
+    jz      .error
+    add     rsi, rax
+    sub     rdx, rax
+    jmp     .loop
+.error:
+    cmp     rax, -EINTR
+    je      .loop
+    mov     eax, SYS_WRITE
+    mov     edi, STDERR
+    lea     rsi, [rel msg_write_error]
+    mov     edx, msg_write_error_len
+    syscall
+    mov     edi, 1
+    jmp     exit_program
+.done:
     ret
 
 write_z:
@@ -1214,6 +1253,24 @@ append_z:
     dec     rdi
     ret
 
+append_z_bounded:
+.loop:
+    cmp     rdi, rdx
+    jae     .fail
+    mov     al, [rsi]
+    mov     [rdi], al
+    test    al, al
+    jz      .done
+    inc     rdi
+    inc     rsi
+    jmp     .loop
+.done:
+    clc
+    ret
+.fail:
+    stc
+    ret
+
 streq:
 .loop:
     mov     al, [rdi]
@@ -1230,6 +1287,57 @@ streq:
     ret
 .yes:
     mov     eax, 1
+    ret
+
+option_abbrev:
+    xor     ecx, ecx
+.loop:
+    mov     al, [rdi]
+    test    al, al
+    jz      .end
+    mov     dl, [rsi]
+    test    dl, dl
+    jz      .no
+    cmp     al, dl
+    jne     .no
+    inc     rdi
+    inc     rsi
+    inc     ecx
+    jmp     .loop
+.end:
+    cmp     ecx, 3
+    jb      .no
+    mov     eax, 1
+    ret
+.no:
+    xor     eax, eax
+    ret
+
+option_abbrev_eq:
+    xor     ecx, ecx
+.loop:
+    mov     al, [rdi]
+    cmp     al, '='
+    je      .end
+    test    al, al
+    jz      .fail
+    mov     dl, [rsi]
+    test    dl, dl
+    jz      .fail
+    cmp     al, dl
+    jne     .fail
+    inc     rdi
+    inc     rsi
+    inc     ecx
+    jmp     .loop
+.end:
+    cmp     ecx, 3
+    jb      .fail
+    inc     rdi
+    clc
+    ret
+.fail:
+    stc
     ret
 
 prefix_match:

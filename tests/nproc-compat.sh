@@ -178,12 +178,16 @@ compare_count_case "ignore-plus" -- --ignore=+2
 compare_count_case "ignore-zero" -- --ignore=0
 compare_count_case "ignore-separate" -- --ignore 2
 compare_count_case "ignore-leading-space" -- "--ignore= 2"
+compare_count_case "ignore-overflow" -- --ignore=18446744073709551616
+compare_count_case "abbrev-all" -- --a
+compare_count_case "abbrev-ignore" -- --i=2
 compare_count_case "omp-num" env OMP_NUM_THREADS=2 --
 compare_count_case "omp-limit" env OMP_THREAD_LIMIT=2 --
 compare_count_case "omp-both" env OMP_NUM_THREADS=8 OMP_THREAD_LIMIT=2 --
 compare_count_case "omp-comma" env OMP_NUM_THREADS=2,4 --
 compare_count_case "omp-ws" env "OMP_NUM_THREADS= 2 " --
 compare_count_case "omp-zero" env OMP_NUM_THREADS=0 --
+compare_count_case "omp-overflow" env OMP_NUM_THREADS=18446744073709551616 --
 compare_count_case "all-ignores-env" env OMP_NUM_THREADS=2 -- --all
 
 if command -v taskset >/dev/null 2>&1; then
@@ -206,6 +210,15 @@ check_mode_case "help-with-tail" "Usage: nproc" --help foo
 check_mode_case "help-after-operand" "Usage: nproc" foo --help
 check_mode_case "version-with-tail" "GNU-compatible nproc" --version foo
 check_mode_case "version-after-operand" "GNU-compatible nproc" foo --version
+check_mode_case "abbrev-help" "Usage: nproc" --h
+check_mode_case "abbrev-version" "GNU-compatible nproc" --v
+
+tests=$((tests + 1))
+if "$clone" >/dev/full 2>"$tmpdir/write-error.err"; then
+  record_failure "write-error: clone exited successfully"
+elif ! grep -Fq "write error" "$tmpdir/write-error.err"; then
+  record_failure "write-error: clone stderr did not contain 'write error'"
+fi
 
 if command -v systemd-run >/dev/null 2>&1 && \
    systemd-run --user --wait --pipe -p CPUQuota=25% "$gnu" >/dev/null 2>/dev/null; then
