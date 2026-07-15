@@ -3,5 +3,8 @@
 !nproc.asm
 !Makefile
 !README.md
+!flake.nix
+!flake.lock
+!.envrc
 !tests/
 !tests/**

@@ -38,10 +38,15 @@ Linux/x86-64.
 
 ## Build And Test
 
+Enter the Nix development shell, then build and run the compatibility suite:
+
 ```sh
+nix develop
 make
 make check
 ```
+
+With direnv installed, `direnv allow` activates the same shell automatically.
 
 ### Syscalls used
 

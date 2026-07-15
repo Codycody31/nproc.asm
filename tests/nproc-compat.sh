@@ -3,7 +3,7 @@
 set -euo pipefail
 
 clone="${NPROC_CLONE:-./nproc}"
-gnu="${NPROC_GNU:-/usr/bin/nproc}"
+gnu="${NPROC_GNU:-nproc}"
 tmpdir="$(mktemp -d)"
 tests=0
 failures=0
